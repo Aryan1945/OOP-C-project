@@ -289,6 +289,14 @@ public:
         activeStations--;
     }
 
+    void writeData(ostream& out) const {
+        out << deviceId << " "
+            << rainfall << " "
+            << slope << " "
+            << saturation << " "
+            << vibration << endl;
+    }
+
     void readTelemetry() override {
         if (!power.hasPower())
             throw SensorFailureException();
@@ -313,6 +321,15 @@ public:
             throw ThresholdOverflowException();
 
         return hazard;
+    }
+
+
+    void updateReadings(double rain, double sl, double soil, double vib) {
+        rainfall = rain;
+        slope = sl;
+        saturation = soil;
+        vibration = vib;
+        hazard = 0;
     }
 
     bool operator>(const SensorStation& s) const {
@@ -449,6 +466,7 @@ using namespace DisasterCore;
 using namespace DisasterCore::Sensors;
 using namespace DisasterCore::Alerts;
 
+
 int main() {
     ifstream file("stations.txt");
 
@@ -465,9 +483,6 @@ int main() {
     }
 
     vector<SensorStation> stations;
-    stations.reserve(n);
-
-    map<int, int> stationIndex;
 
     for (int i = 0; i < n; i++) {
         int id;
@@ -478,35 +493,49 @@ int main() {
             return 1;
         }
 
-        if (stationIndex.count(id)) {
-            cout << "Duplicate station ID: " << id << endl;
-            return 1;
+        for (const auto& s : stations) {
+            if (s.getDeviceId() == id) {
+                cout << "Duplicate station ID.\n";
+                return 1;
+            }
         }
 
         stations.emplace_back(id, rain, slope, soil, vibration);
-        stationIndex[id] = i;
     }
 
     file.close();
 
-    vector<BaseSensorNode*> sensors;
-
-    for (auto& s : stations)
-        sensors.push_back(&s);
-
-    IncidentLogger logger;
     TelemetryAuditor auditor;
+    IncidentLogger logger;
+
+    auto saveData = [&]() {
+        ofstream out("stations.txt");
+
+        if (!out) {
+            cout << "Unable to save station data.\n";
+            return;
+        }
+
+        out << stations.size() << endl;
+
+        for (const auto& s : stations) s.writeData(out);
+        out.close();
+        cout << "Station data saved successfully.\n";
+    };
 
     int choice;
 
     do {
-        cout << "\n===== DISASTER MONITORING SYSTEM =====\n";
+        cout << "\n========== DISASTER MONITORING SYSTEM ==========\n";
         cout << "1. Display All Stations\n";
         cout << "2. Search Station by ID\n";
         cout << "3. Audit Station by ID\n";
-        cout << "4. Run Sensor Sweep\n";
-        cout << "5. Display Active Stations\n";
-        cout << "6. Exit\n";
+        cout << "4. Add New Station\n";
+        cout << "5. Update Station Telemetry\n";
+        cout << "6. Run Sensor Sweep\n";
+        cout << "7. Display Active Stations\n";
+        cout << "8. Save Station Data\n";
+        cout << "9. Exit\n";
         cout << "Enter choice: ";
 
         if (!(cin >> choice)) {
@@ -517,7 +546,12 @@ int main() {
         switch (choice) {
 
         case 1:
-            cout << "\n===== STATION DETAILS =====\n";
+            if (stations.empty()) {
+                cout << "No stations registered.\n";
+                break;
+            }
+
+            cout << "\n========== STATION DETAILS ==========\n";
 
             for (const auto& s : stations)
                 cout << s << endl;
@@ -526,47 +560,155 @@ int main() {
 
         case 2: {
             int id;
+            bool found = false;
 
             cout << "Enter Station ID: ";
             cin >> id;
 
-            if (stationIndex.count(id)) {
-                cout << stations[stationIndex[id]] << endl;
+            for (const auto& s : stations) {
+                if (s.getDeviceId() == id) {
+                    cout << s << endl;
+                    found = true;
+                    break;
+                }
             }
-            else {
+
+            if (!found)
                 cout << "Station not found.\n";
-                cout << "Available Station IDs: ";
-
-                for (const auto& s : stations)
-                    cout << s.getDeviceId() << " ";
-
-                cout << endl;
-            }
 
             break;
         }
 
         case 3: {
             int id;
+            bool found = false;
 
             cout << "Enter Station ID: ";
             cin >> id;
 
-            if (stationIndex.count(id)) {
-                auditor.inspect(stations[stationIndex[id]]);
+            for (const auto& s : stations) {
+                if (s.getDeviceId() == id) {
+                    auditor.inspect(s);
+                    found = true;
+                    break;
+                }
             }
-            else {
+
+            if (!found)
                 cout << "Station not found.\n";
-            }
 
             break;
         }
 
         case 4: {
+            int id;
+            double rain, slope, soil, vibration;
+
+            cout << "Enter New Station ID: ";
+            cin >> id;
+
+            bool exists = false;
+
+            for (const auto& s : stations) {
+                if (s.getDeviceId() == id) {
+                    exists = true;
+                    break;
+                }
+            }
+
+            if (exists) {
+                cout << "Station ID already exists.\n";
+                break;
+            }
+
+            cout << "Enter Rainfall Rate: ";
+            cin >> rain;
+
+            cout << "Enter Slope Angle: ";
+            cin >> slope;
+
+            cout << "Enter Soil Saturation: ";
+            cin >> soil;
+
+            cout << "Enter Vibration Frequency: ";
+            cin >> vibration;
+
+            if (rain < 0 || slope < 0 || soil < 0 ||
+                vibration < 0 || rain > 100 || slope > 100 ||
+                soil > 100 || vibration > 100) {
+                cout << "Invalid sensor readings.\n";
+                break;
+            }
+
+            stations.emplace_back(id, rain, slope, soil, vibration);
+
+            cout << "Station added successfully.\n";
+            saveData();
+
+            break;
+        }
+
+        case 5: {
+            int id;
+            bool found = false;
+
+            cout << "Enter Station ID: ";
+            cin >> id;
+
+            for (auto& s : stations) {
+                if (s.getDeviceId() == id) {
+                    double rain, slope, soil, vibration;
+
+                    cout << "Enter New Rainfall Rate: ";
+                    cin >> rain;
+
+                    cout << "Enter New Slope Angle: ";
+                    cin >> slope;
+
+                    cout << "Enter New Soil Saturation: ";
+                    cin >> soil;
+
+                    cout << "Enter New Vibration Frequency: ";
+                    cin >> vibration;
+
+                    if (rain < 0 || slope < 0 || soil < 0 ||
+                        vibration < 0 || rain > 100 || slope > 100 ||
+                        soil > 100 || vibration > 100) {
+                        cout << "Invalid sensor readings.\n";
+                        found = true;
+                        break;
+                    }
+
+                    s.updateReadings(rain, slope, soil, vibration);
+
+                    cout << "Telemetry updated successfully.\n";
+                    saveData();
+
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found)
+                cout << "Station not found.\n";
+
+            break;
+        }
+
+        case 6: {
+            vector<BaseSensorNode*> sensors;
             vector<pair<int, double>> priorities;
             double totalHazard = 0;
 
-            cout << "\n===== SENSOR SWEEP =====\n";
+            for (auto& s : stations)
+                sensors.push_back(&s);
+
+            if (sensors.empty()) {
+                cout << "No stations available.\n";
+                break;
+            }
+
+            cout << "\n========== SENSOR SWEEP ==========\n";
 
             for_each(sensors.begin(), sensors.end(),
                 [&](BaseSensorNode* sensor) {
@@ -596,7 +738,7 @@ int main() {
                         else {
                             cout << "Station "
                                  << sensor->getDeviceId()
-                                 << ": Normal condition\n";
+                                 << ": Normal condition.\n";
                         }
                     }
                     catch (const exception& e) {
@@ -609,24 +751,28 @@ int main() {
             sort(priorities.begin(), priorities.end(),
                  EvacuationPriority());
 
-            cout << "\n===== EVACUATION PRIORITY =====\n";
+            cout << "\n========== EVACUATION PRIORITY ==========\n";
 
-            for (const auto& p : priorities) {
+            for (const auto& p : priorities)
                 cout << "Station " << p.first
                      << " | Hazard: " << p.second << endl;
-            }
 
             cout << "Total Hazard: " << totalHazard << endl;
 
             break;
         }
 
-        case 5:
+        case 7:
             cout << "Active Stations: "
                  << SensorStation::getActiveStations() << endl;
             break;
 
-        case 6:
+        case 8:
+            saveData();
+            break;
+
+        case 9:
+            saveData();
             cout << "Exiting Disaster Monitoring System.\n";
             break;
 
@@ -634,7 +780,7 @@ int main() {
             cout << "Invalid choice.\n";
         }
 
-    } while (choice != 6);
+    } while (choice != 9);
 
     return 0;
 }
